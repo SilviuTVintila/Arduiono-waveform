@@ -1,0 +1,331 @@
+
+#include <LiquidCrystal.h>  
+#include <String.h>
+#include <math.h>
+#include <SPI.h>
+  
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);  
+
+int menu_number=1; //variabila ce reține numarul meniului selectat 
+int signaltype=1; //variabila ce reține tipul semnalului selectat
+int waveType;
+int v[8]={0,0,1,0,0,0,0,0}; //vectorul frecventa
+long freq=100; //variabila ce retine valoarea frecvenței
+int amplitude=500; //variabila ce retine valoarea amplitudinii
+boolean select;
+int position_value=0;
+int i;
+const int FSYNC = 53;                       // Pinii standard pentru AD9833
+const int CLK =52;                         
+const int DATA = 51;
+const float refFreq = 25000000.0;           // Frecvența de referință a cristalului 
+int FreqWord;
+
+byte down_arrow[8] = {
+B00100,
+B00100,
+B00100,
+B00100,
+B00100,
+B10101,
+B01110, 
+B00100
+}; 
+byte up_arrow[8] = {
+B00100,
+B01110,
+B10101,
+B00100,
+B00100,
+B00100,
+B00100, 
+B00100
+}; 
+
+
+void WriteRegister(int dat) { 
+  
+  
+  // Aici trebuie setat modul SPI pentru a transmite date către AD9833
+  SPI.setDataMode(SPI_MODE2);        
+  
+  digitalWrite(FSYNC, LOW);           //  Aduc FSYNC în starea LOW înainte de a scrie în regiștrii AD9833 
+  delayMicroseconds(10);              //  Aloc timp cipului AD9833 pentru a se pregătii să recepționeze date
+  
+  SPI.transfer(highByte(dat));        // Fiecare registru din AD9833 are lungimea de 32 de biți și
+  SPI.transfer(lowByte(dat));         // fiecare 16 biți trebuie trimiși sub forma a 2 bytes.
+
+  digitalWrite(FSYNC, HIGH);          //Scriere terminată. Setez FSYNC pe HIGH
+}
+
+void AD9833reset() {
+  WriteRegister(0x100);   // Scrie "1" pe bitul registrului de control din AD9833 .
+  delay(10);
+}
+
+
+void AD9833setFrequency(long frequency, int Waveform) {
+  long FreqWord = (frequency * pow(2, 28)) / refFreq;
+
+  int MSB = (int)((FreqWord & 0xFFFC000) >> 14);    //Doar primii 14 biți sunt ulizitați pentru date
+  int LSB = (int)(FreqWord & 0x3FFF);
+  
+  //Setarea bitului de control 15 pe valoarea 0 și a bitului 14 pe valoarea 1
+  LSB |= 0x4000;
+  MSB |= 0x4000; 
+  
+  WriteRegister(0x2100);   
+  WriteRegister(LSB);                  // Scrierea primilor 16 biți in registrele lui AD9833
+  WriteRegister(MSB);                  // Scrierea ultimilor 16 biți in registrele lui AD9833
+  WriteRegister(0xC000);               // Registrul de fază
+  WriteRegister(Waveform);             // Setare formă de undă
+
+}
+
+void setup()   
+{ 
+ SPI.begin();
+ delay(50); 
+ AD9833reset(); 
+ lcd.begin(16, 2);
+ lcd.createChar (0, down_arrow);
+ lcd.createChar (1, up_arrow);
+ Serial.begin(9600);  
+ lcd.setCursor(0,0);
+ lcd.print("   GENERATOR");
+ lcd.setCursor(0,1);
+ lcd.print("   DE SEMNAL");
+ delay(2500);
+ lcd.clear();
+ lcd.setCursor(0,0);
+ lcd.print(" IMPLEMENTAT CU");
+ lcd.setCursor(0,1);
+ lcd.print(" MICROCONTROLER ");
+ delay(2500);
+ menu_diplay(menu_number);
+                                    // Resetarea modulului AD9833 la pornire .
+}  
+
+void frequency_control(int frecventa[],int position_value){
+  lcd.setCursor(0,0);
+  lcd.print(" <-Frecventa->");
+  for (int i=0;i<8;i++)
+  {
+     lcd.setCursor(7-i,1);
+     lcd.print(v[i]);
+  }
+  lcd.setCursor(14,1);
+  lcd.print("Hz");
+  freq=v[0]+v[1]*10+v[2]*100+v[3]*1000+v[4]*10000+v[5]*100000+v[6]*1000000+v[7]*10000000;
+  if (signaltype==2) {
+    freq=freq*2;
+  }
+  AD9833setFrequency(freq, waveType);
+}
+
+
+
+void signal_diplay(int signaltype){
+   if (signaltype==1) {
+    waveType=0x2000;
+    lcd.setCursor(0,1);
+    lcd.print(char(0));
+    lcd.setCursor(1,1);
+    lcd.print("  Sinusoidal  ");
+    lcd.print(char(1));
+    AD9833setFrequency(freq, waveType);
+  };
+   if (signaltype==2) {
+    waveType=0x2020;
+    lcd.setCursor(0,1);
+    lcd.print(char(0));
+    lcd.setCursor(1,1);
+    lcd.print("Dreptunghiular");
+    lcd.print(char(1));
+    AD9833setFrequency(freq*2, waveType);
+  }
+   if (signaltype==3) 
+   {
+    waveType=0x2002;
+    lcd.setCursor(0,1);
+    lcd.print(char(0));
+    lcd.setCursor(1,1);
+    lcd.print(" Tringhiular  ");
+    lcd.print(char(1));
+    AD9833setFrequency(freq, waveType);
+  }
+    
+}
+
+void menu_diplay(int menu_number){
+   if (menu_number==1) {
+  lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(" <-Tip semnal->");
+    signal_diplay(signaltype);
+  };
+   if (menu_number==2) {
+  lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(" <-Frecventa->");
+    frequency_control(v,position_value);
+  }
+   
+    
+}
+
+
+    
+void loop()  {  
+
+ char button='N';  
+ int keypadValue = analogRead (0);
+   if(keypadValue < 20)
+      button='R';
+  else if(keypadValue < 150)
+      button='U';
+  else if(keypadValue < 300)
+       button='D';
+  else if(keypadValue < 500)
+       button='L';
+  else if(keypadValue < 750)
+       button='S';
+       
+while( analogRead(0) < 800){}
+
+if (button=='S') 
+{
+    if (select==false) 
+    {
+        select=true;
+    }
+      else 
+      {
+        select=false;
+      }
+}
+// Selecție meniu
+
+if (button=='R' && !select) //incrementare meniu atunci cand se apasa butonul RIGHT si meniunul nu este selectat
+{  
+    menu_number=menu_number+1;
+    if (menu_number>2)
+    {
+        menu_number=2;
+    }
+    menu_diplay(menu_number);  
+} 
+
+
+if (button=='L' && !select) //incrementare meniu atunci cand se apasa butonul RIGHT si meniunul nu este selectat
+{  
+  menu_number=menu_number-1;
+  if (menu_number==0) 
+  {
+      menu_number=2;
+  }
+  menu_diplay(menu_number);  
+} 
+
+
+// Meniu modificare tip semnal
+if (menu_number==1 && select){
+  
+  
+    if (button=='U') {  
+      signaltype=signaltype-1;
+      if (signaltype==0) {
+          signaltype=3;
+      }
+      signal_diplay(signaltype);  
+    }  
+
+ 
+    if (button=='D'){  
+      signaltype=signaltype+1;
+      if (signaltype>3) {
+          signaltype=1;
+      }
+      signal_diplay(signaltype);  
+    } 
+} 
+
+//Meniu modificare frecvență
+if (menu_number==2 && select){
+
+
+    if (button=='R') {
+          position_value=position_value-1;
+          if (position_value<0) 
+      {
+        position_value=0;
+          }
+    } 
+
+    if (button=='L')  {  
+          position_value=position_value+1;
+          if (position_value>7) 
+      {
+        position_value=7;
+          }
+         
+    }   
+
+
+    if (button=='U') { 
+        v[position_value]=v[position_value]+1;   
+        if (v[position_value]>9){
+          v[position_value]=9;
+        }
+        if (v[7]>1){
+          v[7]=1;
+        }
+        if (v[7]==1 && v[6]>2){
+          v[6]=2;
+        }
+        if (v[7]==1 && v[6]==2 && v[5]>5){
+          v[5]=5;
+        }
+        if (v[7]==1 && v[6]==2 && v[5]==5){
+          v[4]=0;
+          v[3]=0;
+          v[2]=0;
+          v[1]=0;
+          v[0]=0;
+        }
+        frequency_control(v,position_value);  
+     }
+
+
+     if (button=='D'){
+        v[position_value]=v[position_value]-1;
+        if (v[position_value]<0){
+            v[position_value]=0;   
+        }
+        frequency_control(v,position_value);  
+        
+     }
+
+     
+} 
+
+
+
+Serial.print("Button Selectat: ");
+Serial.print(button);
+Serial.print("  ");
+Serial.print("Select on/off ");
+Serial.print(select);
+Serial.print("  ");
+Serial.print("Pozitie frecventa ");
+Serial.print(position_value);
+Serial.print("  ");
+Serial.print("Frecventa ");
+Serial.print(freq);
+Serial.print("  ");
+Serial.print("Forma de unda generator ");
+Serial.println(waveType);
+ }  
+
+
+
